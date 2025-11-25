@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: n8n
+  labels:
+    app: n8n
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: n8n
+  template:
+    metadata:
+      labels:
+        app: n8n
+    spec:
+      containers:
+      # --- CONTENEDOR 1: N8N (Main) ---
+      - name: n8n
+        image: n8nio/n8n:latest
+        ports:
+        - containerPort: 5678
+        env:
+        - name: N8N_PORT
+          value: "5678"
+        - name: GENERIC_TIMEZONE
+          value: "America/Argentina/Buenos_Aires"
+        - name: N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS
+          value: "true"
+        # Variables Secretas
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: n8n-secrets
+              key: GEMINI_API_KEY
+        - name: SLACK_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: n8n-secrets
+              key: SLACK_WEBHOOK_URL
+        
+        volumeMounts:
+        - name: n8n-storage
+          mountPath: /home/node/.n8n
+        - name: import-data
+          mountPath: /import
+
+        # LÓGICA DE SINCRONIZACIÓN (MAIN)
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            # 1. Importar el workflow (esto crea la DB)
+            n8n import:workflow --input=/import/workflow.json
+            
+            # 2. Avisar al sidecar que estamos listos para el parche
+            touch /home/node/.n8n/ready_for_hack
+            echo "✋ Main: Esperando al hacker..."
+            
+            # 3. Esperar a que el sidecar termine (busca el archivo 'hacked')
+            while [ ! -f /home/node/.n8n/hacked ]; do sleep 1; done
+            
+            # 4. Arrancar servidor (ahora sí leerá active=1 desde el inicio)
+            echo "🚀 Main: DB parcheada. Arrancando motor..."
+            n8n
+
+      # --- CONTENEDOR 2: SIDECAR ACTIVATOR (Python) ---
+      - name: activator
+        image: python:3.9-slim
+        volumeMounts:
+        - name: n8n-storage
+          mountPath: /data
+        
+        # LÓGICA DE SINCRONIZACIÓN (SIDECAR)
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            echo "🕵️ Sidecar: Esperando señal..."
+            
+            # 1. Esperar a que n8n cree la DB
+            while [ ! -f /data/ready_for_hack ]; do sleep 1; done
+            
+            # 2. Aplicar el parche SQL
+            echo "🕵️ Sidecar: Aplicando parche de activación..."
+            python -c "import sqlite3; conn = sqlite3.connect('/data/database.sqlite'); conn.execute('UPDATE workflow_entity SET active=1'); conn.commit(); print('✅ UPDATE REALIZADO');"
+            
+            # 3. Avisar a n8n que puede arrancar
+            touch /data/hacked
+            echo "🕵️ Sidecar: Misión cumplida. Durmiendo..."
+            sleep 3600
+
+      volumes:
+      - name: n8n-storage
+        persistentVolumeClaim:
+          claimName: n8n-pvc
+      - name: import-data
+        configMap:
+          name: n8n-import-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: n8n-svc
+spec:
+  selector:
+    app: n8n
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5678
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: n8n-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

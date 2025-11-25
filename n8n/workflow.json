@@ -1,0 +1,130 @@
+{
+  "name": "AIOps - Auto Demo",
+  "versionId": "38276f7f-3195-4aa8-9323-57a55099391d",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "alert",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook Alert",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [460, 240],
+      "webhookId": "aiops-alert"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "gemini_api_key",
+              "value": "={{ $env.GEMINI_API_KEY }}"
+            },
+            {
+              "name": "slack_webhook_url",
+              "value": "={{ $env.SLACK_WEBHOOK_URL }}"
+            },
+            {
+              "name": "source_code",
+              "value": "from flask import Flask, request\nimport logging\nimport sys\n\napp = Flask(__name__)\nlogging.basicConfig(stream=sys.stdout, level=logging.INFO)\n\n@app.route('/')\ndef hello():\n    return \"Todo bien!\"\n\n@app.route('/critical-feature')\ndef critical():\n    user_id = request.args.get('id')\n    if not user_id:\n        return \"Falta ID\", 400\n    try:\n        # ERROR INTENCIONAL\n        tier = 0 \n        result = 100 / tier\n        return f\"Resultado: {result}\"\n    except Exception as e:\n        logging.error(\"Excepcion critica en calculo de tier\", exc_info=True)\n        return \"Internal Server Error\", 500"
+            }
+          ]
+        }
+      },
+      "id": "config",
+      "name": "CONFIGURACION",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [680, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={{ $json.gemini_api_key }}",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "={{ [ { \"parts\": [ { \"text\": \"Actúa como un Ingeniero SRE experto. Analiza el siguiente log de error y el código fuente. Explica la causa raíz y propón un fix en código.\\n\\n--- CODIGO ---\\n\" + $json.source_code + \"\\n\\n--- ERROR ---\\n\" + $('Webhook Alert').item.json.body.message } ] } ] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "gemini-api",
+      "name": "Llamada API Gemini",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('CONFIGURACION').item.json.slack_webhook_url }}",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "=🚨 *INCIDENTE ANALIZADO*\n\n{{ $json.candidates[0].content.parts[0].text }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "slack-api",
+      "name": "Enviar a Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 240]
+    }
+  ],
+  "connections": {
+    "Webhook Alert": {
+      "main": [
+        [
+          {
+            "node": "CONFIGURACION",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CONFIGURACION": {
+      "main": [
+        [
+          {
+            "node": "Llamada API Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Llamada API Gemini": {
+      "main": [
+        [
+          {
+            "node": "Enviar a Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateId": "aiops-demo"
+  }
+}

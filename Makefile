@@ -1,14 +1,18 @@
+# --- Configuración de Shell (Evita error de trap) ---
+SHELL := /bin/bash
+
 # --- Variables ---
 IMAGE_NAME = buggy-app
 TAG = v1
 APP_DIR = buggy-app
+N8N_DIR = n8n
 FULL_IMAGE = $(IMAGE_NAME):$(TAG)
 K8S_CONTEXT := $(shell kubectl config current-context 2>/dev/null)
 
-.PHONY: all setup-infra build load deploy wait-resources info connect clean help
+.PHONY: all setup-infra secrets build load deploy wait-resources info connect clean help
 
 # --- COMANDO MAESTRO ---
-all: setup-infra build load deploy wait-resources info ## 🚀 Instala TODO y muestra credenciales
+all: setup-infra secrets build load deploy wait-resources info ## 🚀 Instala TODO
 	@echo "✅ Instalación completa. Ejecuta 'make connect' para abrir la conexión."
 
 # --- Pasos Individuales ---
@@ -20,7 +24,14 @@ setup-infra:
 	@helm upgrade --install loki grafana/loki-stack \
 		--set grafana.enabled=true \
 		--set promtail.enabled=true \
-		--set loki.isDefault=true > /dev/null 2>&1 || echo "⚠️  Loki ya estaba instalado o warning ignorado."
+		--set loki.isDefault=true > /dev/null 2>&1 || echo "⚠️  Warning ignorado en helm install."
+secrets:
+	@echo "PwD [2/6] Generando Configuración y Secretos..."
+	@if [ ! -f .env ]; then echo "❌ ERROR: No existe el archivo .env"; exit 1; fi
+	@# 1. Secretos (.env)
+	@kubectl create secret generic n8n-secrets --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f - > /dev/null 2>&1
+	@# 2. ConfigMap (Workflow JSON)
+	@kubectl create configmap n8n-import-data --from-file=$(N8N_DIR)/workflow.json --dry-run=client -o yaml | kubectl apply -f - > /dev/null 2>&1
 
 build:
 	@echo "🏗️  [2/5] Construyendo imagen Docker..."
@@ -35,14 +46,20 @@ load:
 	fi
 
 deploy:
-	@echo "🚀 [4/5] Desplegando aplicaciones en K8s..."
+	@echo "🚀 [4/5] Desplegando App y n8n..."
 	@kubectl apply -f $(APP_DIR)/k8s-manifest.yaml > /dev/null 2>&1
+	@# Aquí es donde fallaba antes: ahora sí incluimos n8n
+	@kubectl apply -f $(N8N_DIR)/n8n-manifest.yaml > /dev/null 2>&1
 
 wait-resources:
-	@echo "⏳ [5/5] Esperando a que los servicios estén listos (puede tardar unos segundos)..."
-	@# Esperamos a que el pod de la app esté running
+	@echo "⏳ [5/5] Esperando a que los servicios estén listos..."
+	@# Esperar App Buggy
+	@echo "   ...esperando buggy-app..."
 	@kubectl wait --for=condition=ready pod -l app=$(IMAGE_NAME) --timeout=120s > /dev/null 2>&1
-	@# Esperamos a que el secreto de grafana exista
+	@# Esperar n8n (puede tardar en bajar la imagen)
+	@echo "   ...esperando n8n (esto puede tardar la primera vez)..."
+	@kubectl wait --for=condition=ready pod -l app=n8n --timeout=300s > /dev/null 2>&1
+	@# Esperar Secret Grafana
 	@echo "   ...esperando secreto de Grafana..."
 	@until kubectl get secret loki-grafana > /dev/null 2>&1; do sleep 2; done
 
@@ -50,52 +67,41 @@ info:
 	$(eval GRAFANA_PASS := $(shell kubectl get secret loki-grafana -o jsonpath="{.data.admin-password}" | base64 --decode))
 	@echo ""
 	@echo "============================================================"
-	@echo "🎉  ENTORNO LISTO PARA LA DEMO"
+	@echo "🎉  ENTORNO AIOPS LISTO"
 	@echo "============================================================"
-	@echo "📱 App Buggy:     http://localhost:8080"
+	@echo "📱 Buggy App:     http://localhost:8080"
+	@echo "🧠 n8n Workflow:  http://localhost:5678"
 	@echo "📊 Grafana:       http://localhost:3000"
-	@echo "👤 User Grafana:  admin"
-	@echo "🔑 Pass Grafana:  $(GRAFANA_PASS)"
+	@echo "   User: admin / Pass: $(GRAFANA_PASS)"
 	@echo "============================================================"
-	@echo "👉  AHORA: Ejecuta 'make connect' en esta terminal para abrir el acceso."
-	@echo "============================================================"
+	@echo "👉  Ejecuta 'make connect' para empezar."
 
 # --- Utilidades ---
 
-connect: ## Abre los túneles para App y Grafana simultáneamente
+connect: ## Abre los 3 túneles simultáneamente
 	@echo "🔌 Abriendo túneles... (Presiona Ctrl+C para detener)"
-	@echo "   - App: http://localhost:8080"
+	@echo "   - App:     http://localhost:8080"
 	@echo "   - Grafana: http://localhost:3000"
-	@(trap 'kill 0' SIGINT; \
+	@echo "   - n8n:     http://localhost:5678"
+	@(trap 'kill 0' INT; \
 	kubectl port-forward svc/buggy-app-svc 8080:80 > /dev/null 2>&1 & \
 	kubectl port-forward svc/loki-grafana 3000:80 > /dev/null 2>&1 & \
+	kubectl port-forward svc/n8n-svc 5678:80 > /dev/null 2>&1 & \
 	wait)
 
 logs: ## Ver logs de la app
 	kubectl logs -l app=$(IMAGE_NAME) -f
 
-clean: ## 🛑 BORRADO TOTAL (App + Infra + Datos)
+clean: ## 🛑 BORRADO TOTAL
 	@echo "🧹 Iniciando limpieza profunda..."
-	@# 1. Borrar la App
 	@kubectl delete -f $(APP_DIR)/k8s-manifest.yaml --ignore-not-found=true > /dev/null 2>&1
-	@echo "   - App eliminada."
-	
-	@# 2. Desinstalar Helm Chart
+	@kubectl delete -f $(N8N_DIR)/n8n-manifest.yaml --ignore-not-found=true > /dev/null 2>&1
 	@helm uninstall loki --ignore-not-found=true > /dev/null 2>&1
-	@echo "   - Helm release desinstalada."
-	
-	@# 3. Borrar Secretos específicos que a veces quedan
 	@kubectl delete secret loki-grafana --ignore-not-found=true > /dev/null 2>&1
 	@kubectl delete secret sh.helm.release.v1.loki.v1 --ignore-not-found=true > /dev/null 2>&1
-	@echo "   - Secretos eliminados."
-
-	@# 4. Borrar PVCs (Discos persistentes) - ESTO ES LO QUE FALTABA
-	@# Buscamos cualquier PVC que tenga la etiqueta de release=loki
 	@kubectl delete pvc -l release=loki --ignore-not-found=true > /dev/null 2>&1
-	@kubectl delete pvc -l app=loki --ignore-not-found=true > /dev/null 2>&1
-	@echo "   - Datos persistentes (PVCs) eliminados."
-	
-	@echo "✨ Cluster limpioa."
+	@kubectl delete pvc n8n-pvc --ignore-not-found=true > /dev/null 2>&1
+	@echo "✨ Cluster limpio."
 
-help: ## Muestra esta ayuda
+help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
