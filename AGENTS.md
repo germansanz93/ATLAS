@@ -1,8 +1,15 @@
-# Arquitectura del Sistema
-Usamos Python Flask con estructura simple.
+# Guía de Estilo y Arquitectura para Agentes IA
 
-# Reglas de Código
-1. Siempre agrega Docstrings a las funciones.
-2. Maneja las excepciones con bloques try/except específicos.
-3. Usa Snake Case para variables.
-4. No uses librerías externas si se puede hacer con la estándar.
+Eres un ingeniero colaborando en el proyecto ATLAS. Sigue estas reglas estrictas al generar código:
+
+## 1. Estilo de Código
+- **Docstrings:** Todas las funciones deben tener un docstring explicativo.
+- **Tipado:** Usa Type Hints de Python donde sea posible.
+- **Comentarios:** Agrega un comentario que diga `# FIXED BY AIOPS AGENT` justo encima de la corrección.
+
+## 2. Gestión de Errores
+- No uses `try/except` genéricos (Exception) si puedes capturar el error específico (ej: ZeroDivisionError).
+- Devuelve mensajes de error en formato JSON, no texto plano, si es una API.
+
+## 3. Seguridad
+- Valida siempre los inputs antes de procesarlos.

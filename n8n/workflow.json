@@ -1,6 +1,6 @@
 {
   "name": "AIOps - Auto PR Generator",
-  "versionId": "final-v3-fix-commit-content",
+  "versionId": "hito1-contexto-agents-md",
   "active": true,
   "nodes": [
     {
@@ -128,13 +128,39 @@
     },
     {
       "parameters": {
-        "jsCode": "// 1. Inputs\nconst fileData = $('Leer Codigo Actual').item.json;\nconst alertData = $('Webhook Alert').item.json;\n\n// 2. Decodificar Base64\nconst sourceCode = Buffer.from(fileData.content, 'base64').toString('utf-8');\nconst errorMsg = alertData.body.alerts[0].annotations.description;\n\n// 3. Prompt\nconst promptText = `Eres un experto desarrollador senior. Analiza el error y el código. DEBES RESPONDER SOLO UN JSON VALIDO (sin markdown ni explicacion previa). Formato estricto: { \"explanation\": \"breve explicacion\", \"fixed_code\": \"codigo completo corregido\" }.\n\n--- CODIGO ORIGINAL ---\n${sourceCode}\n\n--- ERROR REPORTADO ---\n${errorMsg}`;\n\n// 4. Output\nreturn {\n  geminiPayload: {\n    contents: [{ parts: [{ text: promptText }] }]\n  },\n  originalSha: fileData.sha // Guardamos el SHA para usarlo después\n};"
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('CONFIGURACION').item.json.owner }}/{{ $('CONFIGURACION').item.json.repo }}/contents/AGENTS.md",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=token {{ $('CONFIGURACION').item.json.github_token }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.v3+json"
+            }
+          ]
+        },
+        "options": {},
+        "onError": "continueRegularOutput"
+      },
+      "id": "get-agents-md",
+      "name": "Leer Reglas (AGENTS.md)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- DEBUGGING Y LIMPIEZA ---\n// 1. Obtener inputs\nconst fileData = $('Leer Codigo Actual').item.json;\nconst alertData = $('Webhook Alert').item.json;\nconst rulesData = $('Leer Reglas (AGENTS.md)').item.json;\n\n// 2. Decodificar Base64 de forma segura\nconst sourceCode = Buffer.from(fileData.content, 'base64').toString('utf-8');\nconst errorMsg = alertData.body.alerts[0].annotations.description;\n\n// 3. Procesar Reglas (Si existen)\nlet contextRules = \"Sin reglas especificas. Aplica mejores practicas generales.\";\nif (rulesData && rulesData.content) {\n  contextRules = Buffer.from(rulesData.content, 'base64').toString('utf-8');\n}\n\n// 4. Construir el Prompt con CONTEXTO\nconst promptText = `Eres un experto desarrollador senior del proyecto ATLAS. Tu trabajo es arreglar el código siguiendo estrictamente las reglas de arquitectura.\n\n--- REGLAS DEL PROYECTO (AGENTS.MD) ---\n${contextRules}\n\n--- CODIGO ORIGINAL ---\n${sourceCode}\n\n--- ERROR REPORTADO ---\n${errorMsg}\n\n--- INSTRUCCION ---\nAnaliza el error y el código. DEBES RESPONDER SOLO UN JSON VALIDO (sin markdown ni explicacion previa). Formato estricto: { \"explanation\": \"breve explicacion citando qué regla se aplicó\", \"fixed_code\": \"codigo completo corregido\" }.`;\n\n// 5. Retornar\nreturn {\n  geminiPayload: {\n    contents: [\n      {\n        parts: [\n          { text: promptText }\n        ]\n      }\n    ]\n  },\n  originalSha: fileData.sha\n};"
       },
       "id": "prepare-prompt",
       "name": "Preparar Prompt Seguro",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 300]
+      "position": [1300, 300]
     },
     {
       "parameters": {
@@ -150,17 +176,17 @@
       "name": "Analizar y Corregir",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1300, 300]
+      "position": [1500, 300]
     },
     {
       "parameters": {
-        "jsCode": "const raw = $input.item.json.candidates[0].content.parts[0].text;\n// Limpieza agresiva de bloques de código markdown\nconst clean = raw.replace(/```json/g, '').replace(/```/g, '').trim();\nconst parsed = JSON.parse(clean);\n\n// IMPORTANTE: Codificar a Base64 para la API de GitHub\nconst contentBase64 = Buffer.from(parsed.fixed_code).toString('base64');\n\nreturn {\n  explanation: parsed.explanation,\n  fixed_code: parsed.fixed_code,\n  content_base64: contentBase64,\n  // Recuperamos el SHA que guardamos en el nodo de preparación\n  base_sha: $('Preparar Prompt Seguro').item.json.originalSha\n};"
+        "jsCode": "const raw = $input.item.json.candidates[0].content.parts[0].text;\nconst clean = raw.replace(/```json/g, '').replace(/```/g, '').trim();\nconst parsed = JSON.parse(clean);\n\n// Codificar a Base64 para GitHub\nconst contentBase64 = Buffer.from(parsed.fixed_code).toString('base64');\n\nreturn {\n  explanation: parsed.explanation,\n  fixed_code: parsed.fixed_code,\n  content_base64: contentBase64,\n  base_sha: $('Preparar Prompt Seguro').item.json.originalSha\n};"
       },
       "id": "parse-json",
       "name": "Parsear JSON Gemini",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1500, 300]
+      "position": [1700, 300]
     },
     {
       "parameters": {
@@ -181,7 +207,7 @@
       "name": "Obtener SHA Main",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1700, 200]
+      "position": [1900, 200]
     },
     {
       "parameters": {
@@ -215,7 +241,7 @@
       "name": "Crear Rama Fix",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1900, 300]
+      "position": [2100, 300]
     },
     {
       "parameters": {
@@ -239,7 +265,7 @@
             },
             {
               "name": "content",
-              "value": "={{ $('Parsear JSON Gemini').item.json.content_base64 }}"
+              "value": "={{ $btoa($('Parsear JSON Gemini').item.json.fixed_code) }}"
             },
             {
               "name": "branch",
@@ -257,7 +283,7 @@
       "name": "Commit Fix",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [2100, 300]
+      "position": [2300, 300]
     },
     {
       "parameters": {
@@ -299,7 +325,7 @@
       "name": "Crear PR",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [2300, 300]
+      "position": [2500, 300]
     },
     {
       "parameters": {
@@ -323,7 +349,7 @@
             },
             {
               "name": "text",
-              "value": "=✅ *PR Creado con Éxito*\n\nLa IA ha analizado el error, creado una rama y propuesto una solución.\n\n🔗 *Ver Pull Request:*\n{{ $json.html_url }}"
+              "value": "=✅ *PR Creado con Éxito*\n\nLa IA ha analizado el error y las reglas de `AGENTS.md`.\n\n🔗 *Ver Pull Request:*\n{{ $json.html_url }}"
             },
             {
               "name": "thread_ts",
@@ -337,7 +363,7 @@
       "name": "Responder en Hilo",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [2500, 300]
+      "position": [2700, 300]
     }
   ],
   "connections": {
@@ -386,6 +412,17 @@
       ]
     },
     "Leer Codigo Actual": {
+      "main": [
+        [
+          {
+            "node": "Leer Reglas (AGENTS.md)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Reglas (AGENTS.md)": {
       "main": [
         [
           {
