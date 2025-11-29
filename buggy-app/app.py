@@ -22,15 +22,30 @@ def critical():
         logging.warning("No user_id provided")
         return "Falta ID", 400
 
+    # Ahora obtenemos el tier de los parametros de la peticion
+    tier_str = request.args.get('tier')
+    
+    if not tier_str:
+        logging.warning(f"No tier provided for user_id: {user_id}")
+        return "Falta parametro 'tier'", 400
+
     try:
-        # ERROR INTENCIONAL: 
-        # Simulamos que calculamos un descuento y dividimos por cero si el tier es 0
-        tier = 0 
+        tier = int(tier_str)
+        
+        # Validamos que el tier no sea cero antes de la division
+        if tier == 0:
+            logging.warning(f"Attempted division by zero with tier=0 for user_id: {user_id}")
+            return "El tier no puede ser cero para esta operación", 400
+
         result = 100 / tier
         return f"Resultado: {result}"
+    except ValueError:
+        # Capturamos errores si 'tier' no es un número
+        logging.warning(f"Invalid tier value '{tier_str}' provided for user_id: {user_id}")
+        return "El tier debe ser un número entero válido", 400
     except Exception as e:
-        # Logueamos el error con stacktrace completo
-        logging.error("Excepcion critica en calculo de tier", exc_info=True)
+        # Logueamos cualquier otra excepcion critica con stacktrace completo
+        logging.error(f"Excepción critica en calculo de tier para user_id: {user_id}", exc_info=True)
         return "Internal Server Error", 500
 
 if __name__ == '__main__':
