@@ -19,12 +19,14 @@ all: setup-infra secrets build load deploy wait-resources info ## 🚀 Instala T
 
 setup-infra:
 	@echo "📦 [1/5] Instalando Stack de Observabilidad (Loki/Grafana)..."
+	@if [ ! -f grafana-values.yaml ]; then echo "❌ Faltan grafana-values.yaml"; exit 1; fi
 	@helm repo add grafana https://grafana.github.io/helm-charts > /dev/null 2>&1
 	@helm repo update > /dev/null 2>&1
+	@# Aquí inyectamos la configuración automática
 	@helm upgrade --install loki grafana/loki-stack \
-		--set grafana.enabled=true \
 		--set promtail.enabled=true \
-		--set loki.isDefault=true > /dev/null 2>&1 || echo "⚠️  Warning ignorado en helm install."
+		--set loki.isDefault=false \
+		-f grafana-values.yaml > /dev/null 2>&1 || echo "⚠️  Warning ignorado."
 secrets:
 	@echo "PwD [2/6] Generando Configuración y Secretos..."
 	@if [ ! -f .env ]; then echo "❌ ERROR: No existe el archivo .env"; exit 1; fi

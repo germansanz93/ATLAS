@@ -33,11 +33,36 @@ spec:
             secretKeyRef:
               name: n8n-secrets
               key: GEMINI_API_KEY
-        - name: SLACK_WEBHOOK_URL
+        - name: SLACK_BOT_TOKEN
           valueFrom:
             secretKeyRef:
               name: n8n-secrets
-              key: SLACK_WEBHOOK_URL
+              key: SLACK_BOT_TOKEN
+        - name: SLACK_CHANNEL_ID
+          valueFrom:
+            secretKeyRef:
+              name: n8n-secrets
+              key: SLACK_CHANNEL_ID
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: n8n-secrets
+              key: GITHUB_TOKEN
+        - name: GITHUB_OWNER
+          valueFrom:
+            secretKeyRef:
+              name: n8n-secrets
+              key: GITHUB_OWNER
+        - name: GITHUB_REPO
+          valueFrom:
+            secretKeyRef:
+              name: n8n-secrets
+              key: GITHUB_REPO
+        - name: GITHUB_FILE_PATH
+          valueFrom:
+            secretKeyRef:
+              name: n8n-secrets
+              key: GITHUB_FILE_PATH
         
         volumeMounts:
         - name: n8n-storage
@@ -49,18 +74,23 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
           - |
-            # 1. Importar el workflow (esto crea la DB)
+            echo "🧹 Main: Iniciando limpieza..."
+            # 1. LIMPIEZA NUCLEAR: Borrar DB vieja para que no queden 'fantasmas'
+            rm -f /home/node/.n8n/database.sqlite
+            
+            # 2. Importar el workflow (esto crea una DB nueva y limpia desde cero)
+            echo "📥 Main: Importando workflow de PR..."
             n8n import:workflow --input=/import/workflow.json
             
-            # 2. Avisar al sidecar que estamos listos para el parche
+            # 3. Avisar al sidecar que estamos listos para el hack de activación
             touch /home/node/.n8n/ready_for_hack
-            echo "✋ Main: Esperando al hacker..."
+            echo "✋ Main: Esperando al sidecar..."
             
-            # 3. Esperar a que el sidecar termine (busca el archivo 'hacked')
+            # 4. Esperar a que el sidecar termine
             while [ ! -f /home/node/.n8n/hacked ]; do sleep 1; done
             
-            # 4. Arrancar servidor (ahora sí leerá active=1 desde el inicio)
-            echo "🚀 Main: DB parcheada. Arrancando motor..."
+            # 5. Arrancar servidor
+            echo "🚀 Main: DB activada. Arrancando motor..."
             n8n
 
       # --- CONTENEDOR 2: SIDECAR ACTIVATOR (Python) ---
@@ -76,16 +106,16 @@ spec:
           - |
             echo "🕵️ Sidecar: Esperando señal..."
             
-            # 1. Esperar a que n8n cree la DB
+            # 1. Esperar a que n8n cree la DB nueva
             while [ ! -f /data/ready_for_hack ]; do sleep 1; done
             
-            # 2. Aplicar el parche SQL
-            echo "🕵️ Sidecar: Aplicando parche de activación..."
+            # 2. Aplicar el parche SQL (Funciona igual para el nuevo workflow)
+            echo "🕵️ Sidecar: Activando workflow..."
             python -c "import sqlite3; conn = sqlite3.connect('/data/database.sqlite'); conn.execute('UPDATE workflow_entity SET active=1'); conn.commit(); print('✅ UPDATE REALIZADO');"
             
             # 3. Avisar a n8n que puede arrancar
             touch /data/hacked
-            echo "🕵️ Sidecar: Misión cumplida. Durmiendo..."
+            echo "🕵️ Sidecar: Trabajo terminado."
             sleep 3600
 
       volumes:

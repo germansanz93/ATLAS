@@ -1,0 +1,72 @@
+grafana:
+  enabled: true
+  grafana.ini:
+    unified_alerting:
+      enabled: true
+  
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Loki
+          type: loki
+          uid: loki           
+          url: http://loki:3100
+          access: proxy
+          isDefault: true
+
+  # --- PROVISIONING DE ALERTAS ---
+  alerting:
+    contactpoints.yaml:
+      apiVersion: 1
+      contactPoints:
+        - orgId: 1
+          name: n8n-webhook
+          receivers:
+            - uid: n8n-webhook-uid
+              type: webhook
+              disableResolveMessage: true
+              settings:
+                url: "http://n8n-svc:80/webhook/alert"
+                httpMethod: POST
+
+    policies.yaml:
+      apiVersion: 1
+      policies:
+        - orgId: 1
+          receiver: n8n-webhook
+          group_by: ["alertname"]
+          group_wait: 5s       # Esperar poco para agrupar
+          group_interval: 10s  # Enviar actualizaciones rápido
+          repeat_interval: 10m
+
+    rules.yaml:
+      apiVersion: 1
+      groups:
+        - orgId: 1
+          name: Demo-AIOps
+          folder: AIOps
+          interval: 10s 
+          rules:
+            - uid: log_error_rule
+              title: Error Critico en App
+              condition: A
+              data:
+                - refId: A
+                  relativeTimeRange:
+                    from: 30
+                    to: 0
+                  datasourceUid: loki 
+                  model:
+                    editorMode: code
+                    expr: 'count_over_time({app="buggy-app"} |= "ERROR" [30s])'
+                    queryType: range
+                    refId: A
+              noDataState: OK
+              execErrState: Error
+              for: 0s
+              annotations:
+                summary: "Excepción Crítica Detectada"
+                description: "Se encontraron logs de ERROR en el microservicio buggy-app."
+              labels:
+                severity: critical

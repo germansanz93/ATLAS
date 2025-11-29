@@ -1,6 +1,6 @@
 {
-  "name": "AIOps - Auto Demo",
-  "versionId": "38276f7f-3195-4aa8-9323-57a55099391d",
+  "name": "AIOps - Auto PR Generator",
+  "versionId": "final-v3-fix-commit-content",
   "active": true,
   "nodes": [
     {
@@ -13,24 +13,50 @@
       "name": "Webhook Alert",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [460, 240],
+      "position": [100, 300],
       "webhookId": "aiops-alert"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body.status }}",
+              "operation": "equal",
+              "value2": "firing"
+            }
+          ]
+        }
+      },
+      "id": "filter-status",
+      "name": "Es Firing?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [300, 300]
     },
     {
       "parameters": {
         "values": {
           "string": [
             {
-              "name": "gemini_api_key",
-              "value": "={{ $env.GEMINI_API_KEY }}"
+              "name": "github_token",
+              "value": "={{ $env.GITHUB_TOKEN }}"
             },
             {
-              "name": "slack_webhook_url",
-              "value": "={{ $env.SLACK_WEBHOOK_URL }}"
+              "name": "owner",
+              "value": "={{ $env.GITHUB_OWNER }}"
             },
             {
-              "name": "source_code",
-              "value": "from flask import Flask, request\nimport logging\nimport sys\n\napp = Flask(__name__)\nlogging.basicConfig(stream=sys.stdout, level=logging.INFO)\n\n@app.route('/')\ndef hello():\n    return \"Todo bien!\"\n\n@app.route('/critical-feature')\ndef critical():\n    user_id = request.args.get('id')\n    if not user_id:\n        return \"Falta ID\", 400\n    try:\n        # ERROR INTENCIONAL\n        tier = 0 \n        result = 100 / tier\n        return f\"Resultado: {result}\"\n    except Exception as e:\n        logging.error(\"Excepcion critica en calculo de tier\", exc_info=True)\n        return \"Internal Server Error\", 500"
+              "name": "repo",
+              "value": "={{ $env.GITHUB_REPO }}"
+            },
+            {
+              "name": "path",
+              "value": "={{ $env.GITHUB_FILE_PATH }}"
+            },
+            {
+              "name": "branch_name",
+              "value": "=fix/incident-{{ $now.format('x') }}"
             }
           ]
         }
@@ -39,55 +65,294 @@
       "name": "CONFIGURACION",
       "type": "n8n-nodes-base.set",
       "typeVersion": 2,
-      "position": [680, 240]
+      "position": [500, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={{ $json.gemini_api_key }}",
-        "sendBody": true,
-        "contentType": "json",
-        "bodyParameters": {
+        "url": "https://slack.com/api/chat.postMessage",
+        "sendHeaders": true,
+        "headerParameters": {
           "parameters": [
             {
-              "name": "contents",
-              "value": "={{ [ { \"parts\": [ { \"text\": \"Actúa como un Ingeniero SRE experto. Analiza el siguiente log de error y el código fuente. Explica la causa raíz y propón un fix en código.\\n\\n--- CODIGO ---\\n\" + $json.source_code + \"\\n\\n--- ERROR ---\\n\" + $('Webhook Alert').item.json.body.message } ] } ] }}"
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SLACK_BOT_TOKEN }}"
             }
           ]
         },
-        "options": {}
-      },
-      "id": "gemini-api",
-      "name": "Llamada API Gemini",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [900, 240]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $('CONFIGURACION').item.json.slack_webhook_url }}",
         "sendBody": true,
-        "contentType": "json",
         "bodyParameters": {
           "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $env.SLACK_CHANNEL_ID }}"
+            },
             {
               "name": "text",
-              "value": "=🚨 *INCIDENTE ANALIZADO*\n\n{{ $json.candidates[0].content.parts[0].text }}"
+              "value": "=🔥 *ALERTA CRÍTICA DETECTADA*\n\nGrafana reporta:\n```\n{{ $('Webhook Alert').item.json.body.alerts[0].annotations.description }}\n```\n\n🕵️‍♂️ _Iniciando protocolo de auto-remediación..._"
             }
           ]
         },
         "options": {}
       },
-      "id": "slack-api",
-      "name": "Enviar a Slack",
+      "id": "slack-alert",
+      "name": "Publicar Alerta Inicial",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1120, 240]
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('CONFIGURACION').item.json.owner }}/{{ $('CONFIGURACION').item.json.repo }}/contents/{{ $('CONFIGURACION').item.json.path }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=token {{ $('CONFIGURACION').item.json.github_token }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.v3+json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-code",
+      "name": "Leer Codigo Actual",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Inputs\nconst fileData = $('Leer Codigo Actual').item.json;\nconst alertData = $('Webhook Alert').item.json;\n\n// 2. Decodificar Base64\nconst sourceCode = Buffer.from(fileData.content, 'base64').toString('utf-8');\nconst errorMsg = alertData.body.alerts[0].annotations.description;\n\n// 3. Prompt\nconst promptText = `Eres un experto desarrollador senior. Analiza el error y el código. DEBES RESPONDER SOLO UN JSON VALIDO (sin markdown ni explicacion previa). Formato estricto: { \"explanation\": \"breve explicacion\", \"fixed_code\": \"codigo completo corregido\" }.\n\n--- CODIGO ORIGINAL ---\n${sourceCode}\n\n--- ERROR REPORTADO ---\n${errorMsg}`;\n\n// 4. Output\nreturn {\n  geminiPayload: {\n    contents: [{ parts: [{ text: promptText }] }]\n  },\n  originalSha: fileData.sha // Guardamos el SHA para usarlo después\n};"
+      },
+      "id": "prepare-prompt",
+      "name": "Preparar Prompt Seguro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={{ $env.GEMINI_API_KEY }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.geminiPayload }}",
+        "options": {}
+      },
+      "id": "gemini",
+      "name": "Analizar y Corregir",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.item.json.candidates[0].content.parts[0].text;\n// Limpieza agresiva de bloques de código markdown\nconst clean = raw.replace(/```json/g, '').replace(/```/g, '').trim();\nconst parsed = JSON.parse(clean);\n\n// IMPORTANTE: Codificar a Base64 para la API de GitHub\nconst contentBase64 = Buffer.from(parsed.fixed_code).toString('base64');\n\nreturn {\n  explanation: parsed.explanation,\n  fixed_code: parsed.fixed_code,\n  content_base64: contentBase64,\n  // Recuperamos el SHA que guardamos en el nodo de preparación\n  base_sha: $('Preparar Prompt Seguro').item.json.originalSha\n};"
+      },
+      "id": "parse-json",
+      "name": "Parsear JSON Gemini",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('CONFIGURACION').item.json.owner }}/{{ $('CONFIGURACION').item.json.repo }}/git/ref/heads/main",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=token {{ $('CONFIGURACION').item.json.github_token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-main-sha",
+      "name": "Obtener SHA Main",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1700, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('CONFIGURACION').item.json.owner }}/{{ $('CONFIGURACION').item.json.repo }}/git/refs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=token {{ $('CONFIGURACION').item.json.github_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ref",
+              "value": "=refs/heads/{{ $('CONFIGURACION').item.json.branch_name }}"
+            },
+            {
+              "name": "sha",
+              "value": "={{ $json.object.sha }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "create-branch",
+      "name": "Crear Rama Fix",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1900, 300]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/{{ $('CONFIGURACION').item.json.owner }}/{{ $('CONFIGURACION').item.json.repo }}/contents/{{ $('CONFIGURACION').item.json.path }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=token {{ $('CONFIGURACION').item.json.github_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "message",
+              "value": "=fix: automated patch by AIOps"
+            },
+            {
+              "name": "content",
+              "value": "={{ $('Parsear JSON Gemini').item.json.content_base64 }}"
+            },
+            {
+              "name": "branch",
+              "value": "={{ $('CONFIGURACION').item.json.branch_name }}"
+            },
+            {
+              "name": "sha",
+              "value": "={{ $('Parsear JSON Gemini').item.json.base_sha }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "commit-file",
+      "name": "Commit Fix",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2100, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('CONFIGURACION').item.json.owner }}/{{ $('CONFIGURACION').item.json.repo }}/pulls",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=token {{ $('CONFIGURACION').item.json.github_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "=🚑 Fix: Incidente Detectado por AIOps"
+            },
+            {
+              "name": "body",
+              "value": "=### Reporte de Incidente Automático\n\n**Análisis de IA:**\n{{ $('Parsear JSON Gemini').item.json.explanation }}\n\nEste PR aplica la corrección sugerida automáticamente."
+            },
+            {
+              "name": "head",
+              "value": "={{ $('CONFIGURACION').item.json.branch_name }}"
+            },
+            {
+              "name": "base",
+              "value": "main"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "create-pr",
+      "name": "Crear PR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2300, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SLACK_BOT_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $env.SLACK_CHANNEL_ID }}"
+            },
+            {
+              "name": "text",
+              "value": "=✅ *PR Creado con Éxito*\n\nLa IA ha analizado el error, creado una rama y propuesto una solución.\n\n🔗 *Ver Pull Request:*\n{{ $json.html_url }}"
+            },
+            {
+              "name": "thread_ts",
+              "value": "={{ $('Publicar Alerta Inicial').item.json.ts }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "slack-reply",
+      "name": "Responder en Hilo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2500, 300]
     }
   ],
   "connections": {
     "Webhook Alert": {
+      "main": [
+        [
+          {
+            "node": "Es Firing?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Es Firing?": {
       "main": [
         [
           {
@@ -102,29 +367,111 @@
       "main": [
         [
           {
-            "node": "Llamada API Gemini",
+            "node": "Publicar Alerta Inicial",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Llamada API Gemini": {
+    "Publicar Alerta Inicial": {
       "main": [
         [
           {
-            "node": "Enviar a Slack",
+            "node": "Leer Codigo Actual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer Codigo Actual": {
+      "main": [
+        [
+          {
+            "node": "Preparar Prompt Seguro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Prompt Seguro": {
+      "main": [
+        [
+          {
+            "node": "Analizar y Corregir",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analizar y Corregir": {
+      "main": [
+        [
+          {
+            "node": "Parsear JSON Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear JSON Gemini": {
+      "main": [
+        [
+          {
+            "node": "Obtener SHA Main",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener SHA Main": {
+      "main": [
+        [
+          {
+            "node": "Crear Rama Fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear Rama Fix": {
+      "main": [
+        [
+          {
+            "node": "Commit Fix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Fix": {
+      "main": [
+        [
+          {
+            "node": "Crear PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear PR": {
+      "main": [
+        [
+          {
+            "node": "Responder en Hilo",
             "type": "main",
             "index": 0
           }
         ]
       ]
     }
-  },
-  "settings": {
-    "executionOrder": "v1"
-  },
-  "meta": {
-    "templateId": "aiops-demo"
   }
 }
