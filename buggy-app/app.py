@@ -9,28 +9,44 @@ logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 @app.route('/')
 def hello():
+    """
+    Maneja las solicitudes a la ruta raíz y retorna un mensaje de bienvenida.
+    """
     logging.info("Peticion recibida en root")
     return "Todo bien por aqui!"
 
 @app.route('/critical-feature')
-def critical():
+def critical_feature():
+    """
+    Procesa una característica crítica que involucra un cálculo, 
+    manejando posibles errores de división por cero o entrada inválida.
+    """
     logging.info("Iniciando proceso critico...")
-    # Simulamos una logica compleja
     user_id = request.args.get('id')
     
     if not user_id:
-        logging.warning("No user_id provided")
+        logging.warning("No user_id provided for critical feature.")
         return "Falta ID", 400
 
     try:
-        # ERROR INTENCIONAL: 
-        # Simulamos que calculamos un descuento y dividimos por cero si el tier es 0
-        tier = 0 
-        result = 100 / tier
+        # Simulamos que el tier se obtiene de los argumentos y puede ser 0 o inválido
+        tier_str = request.args.get('tier', '0') # Default a '0' para simular el error
+        tier_value = int(tier_str)
+        
+        # Simulamos una logica compleja
+        result = 100 / tier_value
         return f"Resultado: {result}"
+    except ZeroDivisionError as e:
+        # Manejo especifico para la division por cero
+        logging.error("Excepcion especifica: Division por cero en calculo de tier para user_id %s", user_id, exc_info=True)
+        return "Error en calculo: Division por cero no permitida", 400
+    except ValueError as e:
+        # Manejo especifico para cuando el tier no es un numero valido
+        logging.error("Excepcion especifica: El valor de tier '%s' no es un numero valido para user_id %s", tier_str, user_id, exc_info=True)
+        return "Error en calculo: El tier debe ser un numero valido", 400
     except Exception as e:
-        # Logueamos el error con stacktrace completo
-        logging.error("Excepcion critica en calculo de tier", exc_info=True)
+        # Catch-all para cualquier otra excepcion inesperada
+        logging.error("Excepcion inesperada en calculo de critical feature para user_id %s", user_id, exc_info=True)
         return "Internal Server Error", 500
 
 if __name__ == '__main__':
