@@ -13,7 +13,10 @@
       "name": "Webhook Alert",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [100, 300],
+      "position": [
+        100,
+        300
+      ],
       "webhookId": "aiops-alert"
     },
     {
@@ -32,7 +35,10 @@
       "name": "Es Firing?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
-      "position": [300, 300]
+      "position": [
+        300,
+        300
+      ]
     },
     {
       "parameters": {
@@ -65,7 +71,10 @@
       "name": "CONFIGURACION",
       "type": "n8n-nodes-base.set",
       "typeVersion": 2,
-      "position": [500, 300]
+      "position": [
+        500,
+        300
+      ]
     },
     {
       "parameters": {
@@ -99,7 +108,10 @@
       "name": "Publicar Alerta Inicial",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [700, 300]
+      "position": [
+        700,
+        300
+      ]
     },
     {
       "parameters": {
@@ -124,7 +136,10 @@
       "name": "Leer Codigo Actual",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [900, 300]
+      "position": [
+        900,
+        300
+      ]
     },
     {
       "parameters": {
@@ -150,7 +165,10 @@
       "name": "Leer Reglas (AGENTS.md)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1100, 300]
+      "position": [
+        1100,
+        300
+      ]
     },
     {
       "parameters": {
@@ -160,7 +178,10 @@
       "name": "Preparar Prompt Seguro",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1300, 300]
+      "position": [
+        1300,
+        300
+      ]
     },
     {
       "parameters": {
@@ -176,7 +197,10 @@
       "name": "Analizar y Corregir",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1500, 300]
+      "position": [
+        1500,
+        300
+      ]
     },
     {
       "parameters": {
@@ -186,7 +210,10 @@
       "name": "Parsear JSON Gemini",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1700, 300]
+      "position": [
+        1700,
+        300
+      ]
     },
     {
       "parameters": {
@@ -207,7 +234,10 @@
       "name": "Obtener SHA Main",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1900, 200]
+      "position": [
+        1900,
+        200
+      ]
     },
     {
       "parameters": {
@@ -241,7 +271,10 @@
       "name": "Crear Rama Fix",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [2100, 300]
+      "position": [
+        2100,
+        300
+      ]
     },
     {
       "parameters": {
@@ -265,7 +298,7 @@
             },
             {
               "name": "content",
-              "value": "={{ $btoa($('Parsear JSON Gemini').item.json.fixed_code) }}"
+              "value": "={{ $('Parsear JSON Gemini').item.json.content_base64 }}"
             },
             {
               "name": "branch",
@@ -283,7 +316,10 @@
       "name": "Commit Fix",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [2300, 300]
+      "position": [
+        2300,
+        300
+      ]
     },
     {
       "parameters": {
@@ -325,7 +361,10 @@
       "name": "Crear PR",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [2500, 300]
+      "position": [
+        2500,
+        300
+      ]
     },
     {
       "parameters": {
@@ -363,7 +402,10 @@
       "name": "Responder en Hilo",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [2700, 300]
+      "position": [
+        2700,
+        300
+      ]
     }
   ],
   "connections": {
