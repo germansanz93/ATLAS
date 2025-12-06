@@ -12,13 +12,14 @@ K8S_CONTEXT := $(shell kubectl config current-context 2>/dev/null)
 .PHONY: all setup-infra secrets build load deploy wait-resources info connect clean help
 
 # --- COMANDO MAESTRO ---
-all: setup-infra secrets build load deploy wait-resources info ## 🚀 Instala TODO
+# --- COMANDO MAESTRO ---
+all: setup-infra secrets deploy-qdrant build load deploy wait-resources info ## 🚀 Instala TODO
 	@echo "✅ Instalación completa. Ejecuta 'make connect' para abrir la conexión."
 
 # --- Pasos Individuales ---
 
 setup-infra:
-	@echo "📦 [1/5] Instalando Stack de Observabilidad (Loki/Grafana)..."
+	@echo "📦 [1/6] Instalando Stack de Observabilidad (Loki/Grafana)..."
 	@if [ ! -f grafana-values.yaml ]; then echo "❌ Faltan grafana-values.yaml"; exit 1; fi
 	@helm repo add grafana https://grafana.github.io/helm-charts > /dev/null 2>&1
 	@helm repo update > /dev/null 2>&1
@@ -27,6 +28,7 @@ setup-infra:
 		--set promtail.enabled=true \
 		--set loki.isDefault=false \
 		-f grafana-values.yaml > /dev/null 2>&1 || echo "⚠️  Warning ignorado."
+
 secrets:
 	@echo "PwD [2/6] Generando Configuración y Secretos..."
 	@if [ ! -f .env ]; then echo "❌ ERROR: No existe el archivo .env"; exit 1; fi
@@ -35,12 +37,16 @@ secrets:
 	@# 2. ConfigMap (Workflow JSON)
 	@kubectl create configmap n8n-import-data --from-file=$(N8N_DIR)/workflow.json --dry-run=client -o yaml | kubectl apply -f - > /dev/null 2>&1
 
+deploy-qdrant:
+	@echo "🧠 [3/6] Desplegando Vector DB (Qdrant)..."
+	@kubectl apply -f qdrant/qdrant-manifest.yaml > /dev/null 2>&1
+
 build:
-	@echo "🏗️  [2/5] Construyendo imagen Docker..."
+	@echo "🏗️  [4/6] Construyendo imagen Docker..."
 	@docker build -t $(FULL_IMAGE) ./$(APP_DIR) > /dev/null 2>&1
 
 load:
-	@echo "🚚 [3/5] Verificando destino de la imagen ($(K8S_CONTEXT))..."
+	@echo "🚚 [5/6] Verificando destino de la imagen ($(K8S_CONTEXT))..."
 	@if echo "$(K8S_CONTEXT)" | grep -q "minikube"; then \
 		minikube image load $(FULL_IMAGE); \
 	elif echo "$(K8S_CONTEXT)" | grep -q "kind"; then \
@@ -48,13 +54,15 @@ load:
 	fi
 
 deploy:
-	@echo "🚀 [4/5] Desplegando App y n8n..."
+	@echo "🚀 [6/6] Desplegando App y n8n..."
 	@kubectl apply -f $(APP_DIR)/k8s-manifest.yaml > /dev/null 2>&1
-	@# Aquí es donde fallaba antes: ahora sí incluimos n8n
 	@kubectl apply -f $(N8N_DIR)/n8n-manifest.yaml > /dev/null 2>&1
 
 wait-resources:
-	@echo "⏳ [5/5] Esperando a que los servicios estén listos..."
+	@echo "⏳ [6/6] Esperando a que los servicios estén listos..."
+	@# Esperar Qdrant
+	@echo "   ...esperando qdrant..."
+	@kubectl wait --for=condition=ready pod -l app=qdrant --timeout=120s > /dev/null 2>&1
 	@# Esperar App Buggy
 	@echo "   ...esperando buggy-app..."
 	@kubectl wait --for=condition=ready pod -l app=$(IMAGE_NAME) --timeout=120s > /dev/null 2>&1
@@ -73,6 +81,7 @@ info:
 	@echo "============================================================"
 	@echo "📱 Buggy App:     http://localhost:8080"
 	@echo "🧠 n8n Workflow:  http://localhost:5678"
+	@echo "🔮 Qdrant UI:     http://localhost:6333/dashboard"
 	@echo "📊 Grafana:       http://localhost:3000"
 	@echo "   User: admin / Pass: $(GRAFANA_PASS)"
 	@echo "============================================================"
@@ -80,15 +89,17 @@ info:
 
 # --- Utilidades ---
 
-connect: ## Abre los 3 túneles simultáneamente
+connect: ## Abre los 4 túneles simultáneamente
 	@echo "🔌 Abriendo túneles... (Presiona Ctrl+C para detener)"
 	@echo "   - App:     http://localhost:8080"
 	@echo "   - Grafana: http://localhost:3000"
 	@echo "   - n8n:     http://localhost:5678"
+	@echo "   - Qdrant:  http://localhost:6333"
 	@(trap 'kill 0' INT; \
 	kubectl port-forward svc/buggy-app-svc 8080:80 > /dev/null 2>&1 & \
 	kubectl port-forward svc/loki-grafana 3000:80 > /dev/null 2>&1 & \
 	kubectl port-forward svc/n8n-svc 5678:80 > /dev/null 2>&1 & \
+	kubectl port-forward svc/qdrant-svc 6333:6333 > /dev/null 2>&1 & \
 	wait)
 
 logs: ## Ver logs de la app
@@ -98,11 +109,13 @@ clean: ## 🛑 BORRADO TOTAL
 	@echo "🧹 Iniciando limpieza profunda..."
 	@kubectl delete -f $(APP_DIR)/k8s-manifest.yaml --ignore-not-found=true > /dev/null 2>&1
 	@kubectl delete -f $(N8N_DIR)/n8n-manifest.yaml --ignore-not-found=true > /dev/null 2>&1
+	@kubectl delete -f qdrant/qdrant-manifest.yaml --ignore-not-found=true > /dev/null 2>&1
 	@helm uninstall loki --ignore-not-found=true > /dev/null 2>&1
 	@kubectl delete secret loki-grafana --ignore-not-found=true > /dev/null 2>&1
 	@kubectl delete secret sh.helm.release.v1.loki.v1 --ignore-not-found=true > /dev/null 2>&1
 	@kubectl delete pvc -l release=loki --ignore-not-found=true > /dev/null 2>&1
 	@kubectl delete pvc n8n-pvc --ignore-not-found=true > /dev/null 2>&1
+	@kubectl delete pvc qdrant-storage --ignore-not-found=true > /dev/null 2>&1
 	@echo "✨ Cluster limpio."
 
 help:
