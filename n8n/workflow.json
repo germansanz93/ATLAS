@@ -1,6 +1,7 @@
 {
-  "name": "AIOps - Auto PR Generator (RAG Enabled)",
-  "versionId": "e693806d-8224-423d-97ba-560119bf6d8c",
+  "id": "b0ccb7be-5256-49a5-a3c6-5fa27971dd66",
+  "name": "AIOps - Auto PR Generator",
+  "versionId": "52005d78-7609-46a8-95f6-5dae27a8d589",
   "active": true,
   "nodes": [
     {
@@ -98,7 +99,7 @@
             },
             {
               "name": "text",
-              "value": "=🔥 *ALERTA CRÍTICA DETECTADA*\n\nGrafana reporta:\n```\n{{ $('Webhook Alert').item.json.body.alerts[0].annotations.description }}\n```\n\n🕵️‍♂️ _Iniciando protocolo de auto-remediación con RAG..._"
+              "value": "=🔥 *ALERTA CRÍTICA DETECTADA*\n\nGrafana reporta:\n```\n{{ $('Webhook Alert').item.json.body.alerts[0].annotations.description }}\n```\n\n🕵️‍♂️ _Iniciando protocolo de auto-remediación..._"
             }
           ]
         },
@@ -172,72 +173,14 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "=https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={{ $env.GEMINI_API_KEY }}",
-        "sendBody": true,
-        "contentType": "json",
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "content",
-              "value": "={{ { parts: [{ text: $('Webhook Alert').item.json.body.alerts[0].annotations.description }] } }}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "embed-alert",
-      "name": "Generar Embedding Alerta",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [
-        1300,
-        100
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://qdrant-svc:6333/collections/atlas_codebase/points/search",
-        "sendBody": true,
-        "contentType": "json",
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "vector",
-              "value": "={{ $json.embedding.values }}"
-            },
-            {
-              "name": "limit",
-              "value": 3
-            },
-            {
-              "name": "with_payload",
-              "value": true
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "search-context",
-      "name": "Buscar Contexto (RAG)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [
-        1500,
-        100
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// --- DEBUGGING Y LIMPIEZA ---\n// 1. Obtener inputs\nconst fileData = $('Leer Codigo Actual').item.json;\nconst alertData = $('Webhook Alert').item.json;\nconst rulesData = $('Leer Reglas (AGENTS.md)').item.json;\nconst ragData = $('Buscar Contexto (RAG)').item.json.result;\n\n// 2. Decodificar Base64 de forma segura\nconst sourceCode = Buffer.from(fileData.content, 'base64').toString('utf-8');\nconst errorMsg = alertData.body.alerts[0].annotations.description;\n\n// 3. Procesar Reglas (Si existen)\nlet contextRules = \"Sin reglas especificas. Aplica mejores practicas generales.\";\nif (rulesData && rulesData.content) {\n  contextRules = Buffer.from(rulesData.content, 'base64').toString('utf-8');\n}\n\n// 4. Procesar Contexto RAG\nlet ragContext = \"\";\nif (ragData && ragData.length > 0) {\n  ragContext = ragData.map(r => `--- ARCHIVO: ${r.payload.path} ---\\n${r.payload.text}`).join(\"\\n\\n\");\n}\n\n// 5. Construir el Prompt con CONTEXTO\nconst promptText = `Eres un experto desarrollador senior del proyecto ATLAS. Tu trabajo es arreglar el código siguiendo estrictamente las reglas de arquitectura.\n\n--- REGLAS DEL PROYECTO (AGENTS.MD) ---\n${contextRules}\n\n--- CONTEXTO ADICIONAL (RAG) ---\n${ragContext}\n\n--- CODIGO ORIGINAL (A CORREGIR) ---\n${sourceCode}\n\n--- ERROR REPORTADO ---\n${errorMsg}\n\n--- INSTRUCCION ---\nAnaliza el error, el contexto y el código. DEBES RESPONDER SOLO UN JSON VALIDO (sin markdown ni explicacion previa). Formato estricto: { \"explanation\": \"breve explicacion citando qué regla se aplicó\", \"fixed_code\": \"codigo completo corregido\" }.`;\n\n// 6. Retornar\nreturn {\n  geminiPayload: {\n    contents: [\n      {\n        parts: [\n          { text: promptText }\n        ]\n      }\n    ]\n  },\n  originalSha: fileData.sha\n};"
+        "jsCode": "// --- DEBUGGING Y LIMPIEZA ---\n// 1. Obtener inputs\nconst fileData = $('Leer Codigo Actual').item.json;\nconst alertData = $('Webhook Alert').item.json;\nconst rulesData = $('Leer Reglas (AGENTS.md)').item.json;\n\n// 2. Decodificar Base64 de forma segura\nconst sourceCode = Buffer.from(fileData.content, 'base64').toString('utf-8');\nconst errorMsg = alertData.body.alerts[0].annotations.description;\n\n// 3. Procesar Reglas (Si existen)\nlet contextRules = \"Sin reglas especificas. Aplica mejores practicas generales.\";\nif (rulesData && rulesData.content) {\n  contextRules = Buffer.from(rulesData.content, 'base64').toString('utf-8');\n}\n\n// 4. Construir el Prompt con CONTEXTO\nconst promptText = `Eres un experto desarrollador senior del proyecto ATLAS. Tu trabajo es arreglar el código siguiendo estrictamente las reglas de arquitectura.\n\n--- REGLAS DEL PROYECTO (AGENTS.MD) ---\n${contextRules}\n\n--- CODIGO ORIGINAL ---\n${sourceCode}\n\n--- ERROR REPORTADO ---\n${errorMsg}\n\n--- INSTRUCCION ---\nAnaliza el error y el código. DEBES RESPONDER SOLO UN JSON VALIDO (sin markdown ni explicacion previa). Formato estricto: { \"explanation\": \"breve explicacion citando qué regla se aplicó\", \"fixed_code\": \"codigo completo corregido\" }.`;\n\n// 5. Retornar\nreturn {\n  geminiPayload: {\n    contents: [\n      {\n        parts: [\n          { text: promptText }\n        ]\n      }\n    ]\n  },\n  originalSha: fileData.sha\n};"
       },
       "id": "prepare-prompt",
       "name": "Preparar Prompt Seguro",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1700,
+        1300,
         300
       ]
     },
@@ -256,7 +199,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        1900,
+        1500,
         300
       ]
     },
@@ -269,7 +212,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2100,
+        1700,
         300
       ]
     },
@@ -293,7 +236,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        2300,
+        1900,
         200
       ]
     },
@@ -330,7 +273,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        2500,
+        2100,
         300
       ]
     },
@@ -375,7 +318,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        2700,
+        2300,
         300
       ]
     },
@@ -420,7 +363,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        2900,
+        2500,
         300
       ]
     },
@@ -461,7 +404,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        3100,
+        2700,
         300
       ]
     }
@@ -523,28 +466,6 @@
       ]
     },
     "Leer Reglas (AGENTS.md)": {
-      "main": [
-        [
-          {
-            "node": "Generar Embedding Alerta",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Generar Embedding Alerta": {
-      "main": [
-        [
-          {
-            "node": "Buscar Contexto (RAG)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Buscar Contexto (RAG)": {
       "main": [
         [
           {

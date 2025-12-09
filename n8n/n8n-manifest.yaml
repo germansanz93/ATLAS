@@ -14,6 +14,15 @@ spec:
       labels:
         app: n8n
     spec:
+      initContainers:
+      # --- INIT: Fix Permissions ---
+      - name: fix-permissions
+        image: busybox:latest
+        command: ['sh', '-c', 'rm -rf /data/* && chown -R 1000:1000 /data && echo "✅ Limpieza y Permisos OK"']
+        volumeMounts:
+        - name: n8n-storage
+          mountPath: /data
+      
       containers:
       # --- CONTENEDOR 1: N8N (Main) ---
       - name: n8n
@@ -78,9 +87,10 @@ spec:
             # 1. LIMPIEZA NUCLEAR: Borrar DB vieja para que no queden 'fantasmas'
             rm -f /home/node/.n8n/database.sqlite
             
-            # 2. Importar el workflow (esto crea una DB nueva y limpia desde cero)
-            echo "📥 Main: Importando workflow de PR..."
-            n8n import:workflow --input=/import/workflow.json
+            # 2. Inicializar DB (Truco: Importar un workflow vacío fuerza las migraciones)
+            echo "🏗️ Main: Inicializando base de datos..."
+            echo '{"nodes":[],"connections":{}}' > /tmp/init.json
+            n8n import:workflow --input=/tmp/init.json || echo "⚠️ Import inicial falló (esperable), pero la DB debería estar lista."
             
             # 3. Avisar al sidecar que estamos listos para el hack de activación
             touch /home/node/.n8n/ready_for_hack
@@ -99,6 +109,8 @@ spec:
         volumeMounts:
         - name: n8n-storage
           mountPath: /data
+        - name: import-data
+          mountPath: /import
         
         # LÓGICA DE SINCRONIZACIÓN (SIDECAR)
         command: ["/bin/sh", "-c"]
@@ -109,11 +121,116 @@ spec:
             # 1. Esperar a que n8n cree la DB nueva
             while [ ! -f /data/ready_for_hack ]; do sleep 1; done
             
-            # 2. Aplicar el parche SQL (Funciona igual para el nuevo workflow)
-            echo "🕵️ Sidecar: Activando workflow..."
-            python -c "import sqlite3; conn = sqlite3.connect('/data/database.sqlite'); conn.execute('UPDATE workflow_entity SET active=1'); conn.commit(); print('✅ UPDATE REALIZADO');"
+            # 2. Esperar a que la tabla workflow_entity exista
+            echo "🕵️ Sidecar: Esperando a que se creen las tablas..."
+            python -c "
+            import sqlite3
+            import time
+            import json
+            import glob
+            import os
+            import datetime
             
-            # 3. Avisar a n8n que puede arrancar
+            DB_PATH = '/data/database.sqlite'
+            IMPORT_DIR = '/import'
+            
+            def wait_for_db():
+                max_attempts = 120
+                for i in range(max_attempts):
+                    try:
+                        conn = sqlite3.connect(DB_PATH)
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT COUNT(*) FROM project')
+                        count = cursor.fetchone()[0]
+                        conn.close()
+                        if count > 0:
+                            print(f'✅ DB lista. Encontrados {count} proyectos.')
+                            return True
+                    except Exception as e:
+                        if i % 10 == 0:
+                            print(f'⏳ Esperando DB... ({i}s)')
+                        time.sleep(1)
+                return False
+
+            def get_personal_project(cursor):
+                # Buscar el proyecto personal del usuario
+                cursor.execute(\"SELECT id FROM project WHERE type='personal' LIMIT 1\")
+                row = cursor.fetchone()
+                return row[0] if row else None
+
+            def import_workflows():
+                if not wait_for_db():
+                    print('❌ Timeout esperando DB')
+                    exit(1)
+                
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                
+                # Obtener ID del proyecto personal
+                project_id = get_personal_project(cursor)
+                if not project_id:
+                    print('⚠️  No se encontró proyecto personal. Intentando esperar un poco más...')
+                    time.sleep(10)
+                    project_id = get_personal_project(cursor)
+                
+                if not project_id:
+                    print('❌ ERROR CRITICO: No se encontró proyecto personal para asignar workflows.')
+                    # No salimos, intentamos importar igual aunque queden huérfanos (mejor que nada)
+                else:
+                    print(f'✅ Proyecto Personal encontrado: {project_id}')
+
+                files = glob.glob(os.path.join(IMPORT_DIR, '*.json'))
+                print(f'📂 Encontrados {len(files)} archivos para importar.')
+                
+                now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                
+                for file_path in files:
+                    try:
+                        with open(file_path, 'r') as f:
+                            wf = json.load(f)
+                        
+                        wf_id = wf.get('id')
+                        name = wf.get('name')
+                        nodes = json.dumps(wf.get('nodes', []))
+                        connections = json.dumps(wf.get('connections', {}))
+                        version_id = wf.get('versionId', '1')
+                        
+                        print(f'🔄 Importando: {name} ({wf_id})...')
+                        
+                        # 1. Insertar en workflow_entity
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO workflow_entity 
+                            (id, name, active, nodes, connections, versionId, createdAt, updatedAt, versionCounter)
+                            VALUES (?, ?, 1, ?, ?, ?, ?, ?, 1)
+                        ''', (wf_id, name, nodes, connections, version_id, now, now))
+                        
+                        # 2. Insertar en workflow_history (para evitar error de FK si n8n lo busca)
+                        cursor.execute('''
+                            INSERT OR IGNORE INTO workflow_history 
+                            (workflowId, versionId, nodes, connections, name, authors, createdAt, updatedAt, autosaved)
+                            VALUES (?, ?, ?, ?, ?, '', ?, ?, 0)
+                        ''', (wf_id, version_id, nodes, connections, name, now, now))
+                        
+                        # 3. Asignar al usuario (shared_workflow)
+                        if project_id:
+                            cursor.execute('''
+                                INSERT OR REPLACE INTO shared_workflow
+                                (workflowId, projectId, role, createdAt, updatedAt)
+                                VALUES (?, ?, 'workflow:owner', ?, ?)
+                            ''', (wf_id, project_id, now, now))
+                            print(f'   👤 Asignado a proyecto {project_id}')
+                        
+                    except Exception as e:
+                        print(f'❌ Error importando {file_path}: {e}')
+                
+                conn.commit()
+                conn.close()
+                print('🎉 Importación SQL finalizada.')
+
+            import_workflows()
+            "
+            
+            # 4. Avisar a n8n que puede arrancar
             touch /data/hacked
             echo "🕵️ Sidecar: Trabajo terminado."
             sleep 3600
