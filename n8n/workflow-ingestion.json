@@ -178,7 +178,7 @@
         }
     ],
     "connections": {
-        "Manual Trigger": {
+        "Webhook Ingest": {
             "main": [
                 [
                     {
