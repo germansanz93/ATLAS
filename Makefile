@@ -32,8 +32,11 @@ secrets:
 	@if [ ! -f .env ]; then echo "❌ ERROR: No existe el archivo .env"; exit 1; fi
 	@# 1. Secretos (.env)
 	@kubectl create secret generic n8n-secrets --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f - > /dev/null 2>&1
-	@# 2. ConfigMap (Workflow JSON)
-	@kubectl create configmap n8n-import-data --from-file=$(N8N_DIR)/workflow.json --dry-run=client -o yaml | kubectl apply -f - > /dev/null 2>&1
+	@# 2. ConfigMap (Workflow JSONs - ambos workflows)
+	@kubectl create configmap n8n-import-data \
+		--from-file=$(N8N_DIR)/workflow.json \
+		--from-file=$(N8N_DIR)/workflow-ingestion.json \
+		--dry-run=client -o yaml | kubectl apply -f - > /dev/null 2>&1
 
 build:
 	@echo "🏗️  [2/5] Construyendo imagen Docker..."

@@ -68,12 +68,14 @@ graph TD
             Grafana(📊 Grafana) -->|Query Logs| Loki
         end
 
-        subgraph "Automation & Intelligence"
+    subgraph "Automation & Intelligence"
             style Auto fill:#e8f5e9,stroke:#2e7d32,stroke-dasharray: 5 5;
             n8n(🤖 n8n Agent)
+            Qdrant[(🧠 Qdrant Vector DB)]
         end
         
         Grafana -->|Webhook Alert| n8n
+        n8n -->|Ingest Code| Qdrant
     end
 
     subgraph "☁️ External Services"
@@ -90,7 +92,25 @@ graph TD
     Gemini -->|4. JSON Fix| n8n
     n8n -->|5. Create Branch & PR| GitHub
     n8n -->|6. Reply with PR Link| Slack
+    
+    %% Ingestion Flow
+    GitHub -.->|Clone & Embed| n8n
+    n8n -.->|Store Vectors| Qdrant
 
     classDef container fill:#ffffff,stroke:#333,stroke-width:2px;
-    class App,Promtail,Loki,Grafana,n8n container;
+    class App,Promtail,Loki,Grafana,n8n,Qdrant container;
 ```
+
+## 🧠 Workflows de n8n
+
+El sistema cuenta con dos workflows principales:
+
+1.  **AIOps - Auto PR Generator**:
+    *   **Trigger**: Webhook desde Grafana (Alerta).
+    *   **Acción**: Analiza el error, lee el código afectado desde GitHub, consulta a Gemini y crea un PR con la solución.
+    *   **Estado**: Activo y reactivo.
+
+2.  **AIOps - Codebase Ingestion**:
+    *   **Trigger**: Webhook manual (`/webhook/ingest`).
+    *   **Acción**: Descarga todo el repositorio, genera embeddings (vectores) de cada archivo y los almacena en **Qdrant**.
+    *   **Objetivo**: Proporcionar "memoria a largo plazo" y contexto semántico a la IA (actualmente la remediación usa contexto directo, pero la base de datos está lista para búsquedas semánticas futuras).

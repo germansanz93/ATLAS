@@ -1,0 +1,270 @@
+{
+    "id": "bf160c1b-e0fd-4f7c-a2ac-830a33840b8b",
+    "name": "AIOps - Codebase Ingestion",
+    "versionId": "52005d78-7609-46a8-95f6-5dae27a8d590",
+    "active": true,
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "ingest",
+                "options": {}
+            },
+            "id": "webhook-ingest",
+            "name": "Webhook Ingest",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [
+                100,
+                300
+            ],
+            "webhookId": "aiops-ingest"
+        },
+        {
+            "parameters": {
+                "method": "PUT",
+                "url": "http://qdrant-svc:6333/collections/atlas_codebase",
+                "sendBody": true,
+                "contentType": "json",
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "vectors",
+                            "value": "={{ { size: 768, distance: \"Cosine\" } }}"
+                        }
+                    ]
+                },
+                "options": {
+                    "ignoreHttpStatusErrors": true
+                }
+            },
+            "id": "create-collection",
+            "name": "Create Collection",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                300,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "=https://api.github.com/repos/{{ $env.GITHUB_OWNER }}/{{ $env.GITHUB_REPO }}/git/trees/main?recursive=1",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Authorization",
+                            "value": "=token {{ $env.GITHUB_TOKEN }}"
+                        }
+                    ]
+                }
+            },
+            "id": "get-files",
+            "name": "Fetch All Files",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                500,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "const files = $input.item.json.tree;\nreturn files.filter(f => \n  f.type === 'blob' && \n  (f.path.endsWith('.py') || f.path.endsWith('.md') || f.path.endsWith('.yaml') || f.path.endsWith('.yml'))\n).map(f => ({ json: { path: f.path, url: f.url } }));"
+            },
+            "id": "filter-files",
+            "name": "Filter Code Files",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                700,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "={{ $json.url }}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Authorization",
+                            "value": "=token {{ $env.GITHUB_TOKEN }}"
+                        }
+                    ]
+                }
+            },
+            "id": "get-content",
+            "name": "Get File Content",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                900,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "const blobs = $input.all();\nconst files = $('Filter Code Files').all();\n\nreturn blobs.map((blob, index) => {\n  const content = Buffer.from(blob.json.content, 'base64').toString('utf-8');\n  const path = files[index].json.path;\n  \n  return {\n    json: {\n      text: `File: ${path}\\n\\n${content}`,\n      path: path\n    }\n  };\n});"
+            },
+            "id": "chunk-text",
+            "name": "Prepare Chunks",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1100,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "=https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={{ $env.GEMINI_API_KEY }}",
+                "sendBody": true,
+                "contentType": "json",
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "content",
+                            "value": "={{ { parts: [{ text: $json.text }] } }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "embed",
+            "name": "Generate Embedding",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                1300,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "const embeddings = $input.all();\nconst chunks = $('Prepare Chunks').all();\n\nreturn embeddings.map((item, index) => {\n    const embedding = item.json.embedding.values;\n    const chunk = chunks[index].json;\n    const path = chunk.path;\n    const text = chunk.text;\n\n    // Simple hash for ID (must be positive integer)\n    let hash = 0;\n    for (let i = 0; i < path.length; i++) {\n        const char = path.charCodeAt(i);\n        hash = ((hash << 5) - hash) + char;\n        hash = hash & hash; // Convert to 32bit integer\n    }\n    const id = Math.abs(hash);\n\n    return {\n        json: {\n            qdrantPayload: {\n                points: [\n                    {\n                        id: id,\n                        vector: embedding,\n                        payload: {\n                            path: path,\n                            text: text\n                        }\n                    }\n                ]\n            }\n        }\n    };\n});"
+            },
+            "id": "prepare-payload",
+            "name": "Prepare Qdrant Payload",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1500,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "method": "PUT",
+                "url": "http://qdrant-svc:6333/collections/atlas_codebase/points",
+                "sendBody": true,
+                "contentType": "json",
+                "specifyBody": "json",
+                "jsonBody": "={{ $json.qdrantPayload }}",
+                "options": {}
+            },
+            "id": "qdrant",
+            "name": "Store in Qdrant",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                1700,
+                300
+            ]
+        }
+    ],
+    "connections": {
+        "Webhook Ingest": {
+            "main": [
+                [
+                    {
+                        "node": "Create Collection",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Create Collection": {
+            "main": [
+                [
+                    {
+                        "node": "Fetch All Files",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Fetch All Files": {
+            "main": [
+                [
+                    {
+                        "node": "Filter Code Files",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Filter Code Files": {
+            "main": [
+                [
+                    {
+                        "node": "Get File Content",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get File Content": {
+            "main": [
+                [
+                    {
+                        "node": "Prepare Chunks",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Prepare Chunks": {
+            "main": [
+                [
+                    {
+                        "node": "Generate Embedding",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Generate Embedding": {
+            "main": [
+                [
+                    {
+                        "node": "Prepare Qdrant Payload",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Prepare Qdrant Payload": {
+            "main": [
+                [
+                    {
+                        "node": "Store in Qdrant",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    }
+}
